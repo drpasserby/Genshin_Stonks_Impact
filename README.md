@@ -7,7 +7,7 @@
 ## 预览图
 
 ![预览图](/public/1.jpg)
-更多预览图请看 [docs/PREVIEW.md](docs/PREVIEW.MD)。
+更多预览图请看 [docs/PREVIEW.md](docs/PREVIEW.md)。
 
 ---
 
