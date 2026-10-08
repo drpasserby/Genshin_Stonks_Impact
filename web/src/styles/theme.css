@@ -1,0 +1,110 @@
+/* ============================================================
+   提瓦特证券交易所 · 羊皮纸主题
+   暖色调 + 仿羊皮纸 + 提瓦特元素（金色描边、深褐文字）
+   ============================================================ */
+
+:root {
+  /* 羊皮纸背景 */
+  --ts-bg: #f4ead2;
+  --ts-bg-2: #ece0c4;
+  --ts-paper: #faf3e1;
+  --ts-paper-2: #f6ecd4;
+  --ts-card-border: #d9c392;
+
+  /* 提瓦特金 / 墨褐 */
+  --ts-gold: #c9a24b;
+  --ts-gold-dark: #9a7a2e;
+  --ts-gold-light: #e4cd96;
+  --ts-ink: #4a3b22;
+  --ts-ink-soft: #6b5a3a;
+
+  /* 涨跌 */
+  --ts-up: #b0413e;   /* 红涨（A股习惯） */
+  --ts-down: #2e7d5b; /* 绿跌 */
+  --ts-flat: #8a7b5f;
+
+  --el-color-primary: #a98230;
+  --el-color-success: #2e7d5b;
+  --el-color-danger: #b0413e;
+  --el-color-warning: #c07a1e;
+
+  --el-border-radius-base: 8px;
+  --el-font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--el-font-family);
+  color: var(--ts-ink);
+  background-color: var(--ts-bg);
+  background-image:
+    radial-gradient(circle at 20% 10%, rgba(201, 162, 75, 0.10), transparent 40%),
+    radial-gradient(circle at 85% 90%, rgba(201, 162, 75, 0.12), transparent 45%);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 羊皮纸卡片 */
+.ts-card {
+  background: linear-gradient(160deg, var(--ts-paper), var(--ts-paper-2));
+  border: 1px solid var(--ts-card-border);
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 4px 14px rgba(122, 92, 40, 0.12);
+  padding: 14px 16px;
+}
+
+/* 金色标题线 */
+.ts-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ts-gold-dark);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.ts-title::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background: linear-gradient(180deg, var(--ts-gold), var(--ts-gold-dark));
+  border-radius: 2px;
+}
+
+/* 涨跌文本 */
+.up { color: var(--ts-up) !important; }
+.down { color: var(--ts-down) !important; }
+.flat { color: var(--ts-flat) !important; }
+
+/* 数字等宽 */
+.num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
+
+/* 滚动条美化 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #cdbb8f; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 全局卡片/元素覆盖 */
+.el-card { border-radius: 14px !important; }
+.el-table { --el-table-border-color: #e5d9ba; --el-table-header-bg-color: #efe4c8; }
+
+.page-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 12px 12px 76px;
+}
+
+/* 手机底部导航占位 */
+@media (min-width: 900px) {
+  .page-container { padding-bottom: 24px; }
+  .mobile-only { display: none !important; }
+}
+@media (max-width: 899px) {
+  .desktop-only { display: none !important; }
+}
