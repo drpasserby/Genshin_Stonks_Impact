@@ -1,0 +1,29 @@
+{
+  "name": "teyvat-stock-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "提瓦特证券交易所 - 后端服务 (Node.js + Express + Sequelize + MySQL)",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:init": "node src/scripts/initDb.js",
+    "seed": "node src/seed/seed.js",
+    "check": "node --check src/server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-validator": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.11.0",
+    "sequelize": "^6.37.3",
+    "winston": "^3.13.1",
+    "winston-daily-rotate-file": "^4.7.1"
+  }
+}
