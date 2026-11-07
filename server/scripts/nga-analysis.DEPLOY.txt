@@ -1,0 +1,194 @@
+=====================================================================
+NGA 舆情分析脚本 · 部署说明
+项目：提瓦特证券交易所（teyvat_stock）
+适用：Debian 12 / 阿里云轻量（__SERVER_IP__），Node 由 PM2 托管、MySQL 由宝塔托管
+=====================================================================
+
+一、交付文件
+---------------------------------------------------------------------
+1) server/scripts/nga_analysis.py
+   ├─ 单文件脚本（抓取 + Gemini + 写库），约 480 行
+2) server/sql/migrations/2026-09-12_nga_news_impact.sql
+   ├─ 建 news_impact / nga_analysis_log，并补 system_settings 配置项默认值
+3) server/scripts/nga-analysis.env.example
+   ├─ /etc/nga-analysis/.env 的模板（只含敏感信息）
+4) server/scripts/_selftest_nga_analysis.py
+   ├─ 离线自测（不联网、不连库）：51 项断言覆盖配置读取/过滤/prompt/JSON 解析/
+   │  实体校验/写库 SQL/Cookie 与抓取错误路径/Gemini 重试/日志降级
+   └─ 改完脚本跑一次：python3 server/scripts/_selftest_nga_analysis.py
+5) server/scripts/_memprobe_nga.py
+   └─ 内存探针：在服务器上跑，用反证法确认 RLIMIT_AS 该设多少（见第七节）
+
+⚠️ 文本里给的表结构与本地项目不一致，已按本地实际情况改写：
+   · 配置表：不是 system_config(config_key, config_value)，
+     而是 system_settings(s_key, s_value)（见 server/src/models/systemSetting.js）
+   · 实体白名单：不是 roles / funds 两张表，
+     而是 stocks 一张表用 type 区分（STOCK=角色股 / FUND=指数基金）
+   · entity_type 映射：stocks.type='STOCK' → 'role'；='FUND' → 'fund'
+   · 帖子列表接口：不是 POST forum.php（那是「版面操作」接口，只会返回全站版面目录），
+     而是 GET https://bbs.nga.cn/thread.php?fid=<fid>&__output=11
+   · 模型名：gemini-2.5-flash-lite 已对新用户 404，实测改用 gemini-3.5-flash-lite
+   ▶ 生产环境已于 2026-09-13 按上述方式部署并跑通，实测细节见
+     server/scripts/nga-analysis.STATUS.md
+
+二、目录结构与权限
+---------------------------------------------------------------------
+/etc/nga-analysis/                     drwx------ root:root   (700)
+├── .env                               -rw------- root:root   (600)  敏感信息，含 Gemini 密钥
+└── cookies.json                       -rw------- root:root   (600)  NGA Cookie，格式 {"cookie":"..."}
+
+/opt/teyvat-nga/                       drwxr-xr-x root:root   (755)
+├── venv/                              虚拟环境（pymysql + python-dotenv）
+└── nga_analysis.py                    脚本副本（也可直接跑仓库里的 server/scripts/nga_analysis.py）
+
+原因说明：
+  · .env / cookies.json 含密钥与会话凭证，只有 root 可读，避免同机其它站点进程读取；
+  · cookies.json 用「文件」而不是写进数据库：Cookie 会过期需要频繁替换，
+    放文件里改完即刻生效，且不会污染 system_settings 表、不会出现在数据库备份里；
+  · 脚本目录不需要写权限（脚本只在内存里处理数据，不写临时文件）。
+
+三、数据库权限
+---------------------------------------------------------------------
+用现有业务账号 teyvat（后端/网站用的就是这个）即可，需要的权限：
+  SELECT  —— 读 system_settings、stocks
+  INSERT  —— 写 news_impact、nga_analysis_log
+  UPDATE  —— upsert news_impact（ON DUPLICATE KEY UPDATE）
+如果账号权限不足，用 root 在宝塔面板执行（二选一）：
+  GRANT SELECT, INSERT, UPDATE ON teyvat_stock.* TO 'teyvat'@'127.0.0.1';
+  FLUSH PRIVILEGES;
+说明：只给了 SELECT/INSERT/UPDATE，没给 DELETE/DROP —— 分析脚本永远不需要删数据。
+
+四、部署步骤
+---------------------------------------------------------------------
+# 0) 建库表（在 DBeaver / 宝塔 phpMyAdmin 里执行，或命令行）
+mysql -uteyvat -p__DB_PASSWORD__ -h127.0.0.1 teyvat_stock \
+  < /www/wwwroot/teyvat/server/sql/migrations/2026-09-12_nga_news_impact.sql
+
+# 1) 建目录与配置（权限严格 700/600）
+install -d -m 700 /etc/nga-analysis
+install -m 600 /dev/null /etc/nga-analysis/.env
+install -m 600 /dev/null /etc/nga-analysis/cookies.json
+#   把 nga-analysis.env.example 的内容填进去（替换真实 GEMINI_API_KEY）
+vi /etc/nga-analysis/.env
+#   填 NGA Cookie（浏览器登录 NGA 后从开发者工具复制整条 Cookie 字符串）
+#   内容形如： {"cookie": "ngaPassportUid=...; ngaPassportCid=...; ..."}
+vi /etc/nga-analysis/cookies.json
+chown -R root:root /etc/nga-analysis
+
+# 2) Python 依赖（虚拟环境，只装两个包，避免污染系统 Python）
+apt-get update && apt-get install -y python3-venv
+install -d -m 755 /opt/teyvat-nga
+python3 -m venv /opt/teyvat-nga/venv
+/opt/teyvat-nga/venv/bin/pip install --no-cache-dir pymysql python-dotenv
+cp /www/wwwroot/teyvat/server/scripts/nga_analysis.py /opt/teyvat-nga/
+chmod 755 /opt/teyvat-nga/nga_analysis.py
+
+# 3) 手工试跑一次（看摘要 + 查日志表）
+/opt/teyvat-nga/venv/bin/python /opt/teyvat-nga/nga_analysis.py; echo "exit=$?"
+mysql -uteyvat -p__DB_PASSWORD__ -h127.0.0.1 teyvat_stock \
+  -e "SELECT id,level,message,created_at FROM nga_analysis_log ORDER BY id DESC LIMIT 20;
+      SELECT entity_type,entity_name,raw_impact,confidence,summary,source_count,analyzed_at
+        FROM news_impact ORDER BY analyzed_at DESC, entity_name LIMIT 20;"
+
+# 4) （建议）内存上限实测，确认 64MB 够用
+/opt/teyvat-nga/venv/bin/python /www/wwwroot/teyvat/server/scripts/_memprobe_nga.py
+
+五、system_config / system_settings 初始化
+---------------------------------------------------------------------
+不需要单独执行 SQL：后端启动时 ensureDefaults() 会按 SETTING_SCHEMA 自动补齐，
+迁移文件（2026-09-12_nga_news_impact.sql / 2026-09-13_nga_panel_settings.sql /
+2026-09-14_*.sql）里的 INSERT IGNORE 也是幂等的，只为留痕。
+
+（历史记录：早期版本用大写键名 NGA_FORUM_FID / NGA_MAX_POSTS / NEWS_IMPACT_WEIGHT 等，
+已全部改为小写 snake_case 与 SETTING_SCHEMA 对齐，大写键与 NEWS_* 三个只读键
+已于 2026-09-14 从库里删除 —— 见 2026-09-14_prune_dead_settings.sql。）
+
+脚本读取行为：配置项不存在时用代码内默认值继续跑，并在 nga_analysis_log 里写一条 WARN。
+
+六、crontab 配置
+---------------------------------------------------------------------
+★ 2026-09-13 起：抓取开关 / 频率 / 版面 / API Key / Cookie 全部搬进控制面板，
+  crontab 只负责「每 5 分钟问一次」，是否真跑由面板「分析间隔」决定。
+
+# root 身份执行：crontab -e
+# NGA 舆情分析：每 5 分钟唤起一次（真正的分析频率由控制面板「分析间隔」控制，默认 180 分钟）
+*/5 * * * * cd /opt/teyvat-nga && /opt/teyvat-nga/venv/bin/python /opt/teyvat-nga/nga_analysis.py >/dev/null 2>&1
+
+说明：
+  · 为什么改成每 5 分钟而不是 3 */3：把「频率」变成面板配置项后，调度必须比最小间隔更频繁；
+    脚本每轮先看面板的 nga_interval_minutes，没到点就写一条 INFO 跳过（开销 < 0.2 秒，
+    只读一次库、不抓 NGA、不调 Gemini）。
+  · 面板默认间隔 180 分钟（3 小时），想改频率直接改面板，不用动 crontab。
+  · >/dev/null 2>&1 是刻意的：脚本自己把日志写进 nga_analysis_log；
+    正常与失败都返回 0，只有「数据库连不上」返回 2（此时才需要 cron 发邮件）。
+  · 脚本内部不做 sleep、不做循环，每次执行完即退出。
+
+七、面板配置项一览（系统控制面板 → 系统开关与参数 → 分组「市场情绪」）
+---------------------------------------------------------------------
+  nga_analysis_enabled    总开关（默认关；关闭时不产生任何外部请求）
+  nga_interval_minutes    分析间隔分钟（默认 180，最小 10）
+  nga_forum_fid           监测版面（650=原神主板 / 835=剑斗绮谭 / 逗号分隔多版面）
+  nga_max_posts           单轮最多分析帖数（默认 30）
+  nga_request_timeout     NGA 请求超时秒（默认 15）
+  nga_fetch_content       是否抓帖子正文（默认开）
+  nga_content_max_threads 每轮最多抓几帖正文（默认 12；0 = 不抓）
+  nga_content_max_floors  每帖最多取几层（默认 8；1 = 只主楼）
+  gemini_api_key          ★敏感★ 保存后不回显，只显示「已配置（长度 N）」
+  gemini_model            默认 gemini-3.5-flash-lite
+  gemini_max_retries      AI 重试次数（默认 2，间隔 5 秒）
+  gemini_timeout_seconds  AI 超时秒（默认 30）
+  nga_cookie              ★敏感★ NGA 登录 Cookie（须含 ngaPassportUid / ngaPassportCid）
+  nga_news_auto_publish   结论是否自动写入市场情绪（默认开）
+  nga_news_max_stocks     每条情绪最多关联几个角色（默认 5）
+
+  情绪 → 撮合定价（同一分组，2026-09-14 新增）：
+  sentiment_before_review 审核通过前是否即影响股价（默认开）
+  sentiment_weight        情绪因子权重 wS（默认 0.2）
+  sentiment_decay_hours   情绪影响股价的时长小时（默认 72）
+
+运行状态（只读，脚本每轮回写，失败会标红）：
+  nga_health_status / nga_health_last_run / nga_health_last_success /
+  nga_health_cookie_ok_at / nga_health_api_ok_at / nga_health_last_detail
+
+安全说明：敏感项在后端 listAllWithMeta() 里被替换成掩码（•••••••已配置（长度 N）），
+  明文只存在 MySQL；前端原样回传掩码时后端视为「未修改」，不会写入掩码串；
+  审计日志 ADMIN_UPDATE_SETTING 对敏感项只记长度。
+  ⚠️ 因此数据库备份文件已包含凭据，请按机密文件管理。
+
+八、运行上限与容错要点
+---------------------------------------------------------------------
+· 内存/CPU 硬限制（脚本开头 resource.setrlimit）：
+    RLIMIT_AS  = 64MB   （NGA_RLIMIT_AS_MB 可覆盖）
+    RLIMIT_CPU = 60s    （NGA_RLIMIT_CPU_S 可覆盖）
+  【已在生产实测】真实负载（150 个实体名 + 30 帖 × 200 字 ≈ 20KB 提示词）峰值
+  仅 22.9MB，64MB 有 2.5 倍余量，无需放宽。想自己复核可跑：
+    /opt/teyvat-nga/venv/bin/python /opt/teyvat-nga/memprobe.py
+· 不用 requests，全部走标准库 urllib.request/json/ssl（省约 20MB）；
+  数据库驱动用纯 Python 的 pymysql；临时数据只在内存，不写临时文件。
+· Cookie 失效（响应含 denied:true、或 HTTP 301/302/401/403/404/503、或 Cookie 缺
+  ngaPassportUid/Cid）：写一条 [COOKIE_EXPIRED] ERROR + 一条 [NGA-FAILED] 收尾消息，
+  正常退出；面板「最近一轮结果」会标红并写明原因。
+· 网络超时等抓取失败：不重试，记 ERROR 后正常退出（下一轮再来）。
+· Gemini 失败：最多重试 GEMINI_MAX_RETRIES 次、每次间隔 5 秒；
+  解析失败时把原始响应前 2000 字符写进 nga_analysis_log.detail。
+· 日志 Handler 复用主连接，emit 内部捕获全部异常并降级到 stderr。
+· 每轮结束都会写一条结果消息：成功 [NGA-SUCCESS] / 失败 [NGA-FAILED] /
+  预演 [NGA-DRYRUN] / 部分写入失败 [NGA-PARTIAL]（WARN），并回写面板运行状态。
+· 退出码：0 = 正常（含 Cookie 失效、抓取失败等业务性失败）；2 = 数据库连不上。
+
+九、附录：表结构变更
+---------------------------------------------------------------------
+2026-09-13 的迁移把 system_settings.s_value 从 VARCHAR(500) 扩到 VARCHAR(8192)
+—— 一条 NGA 登录 Cookie 实测 795 字符，不扩容会直接报 Data too long。
+脚本/面板本身不需要别的结构变更。
+
+八、上线后自查
+---------------------------------------------------------------------
+1. mysql> SELECT * FROM system_settings WHERE s_key LIKE 'NGA\_%' OR s_key LIKE 'GEMINI\_%';
+2. mysql> SELECT level,message,created_at FROM nga_analysis_log ORDER BY id DESC LIMIT 20;
+   —— 期望看到：脚本启动 / 白名单载入 / 抓取成功 / AI 返回 N 条 / 写入完成 / 脚本结束
+3. mysql> SELECT entity_type,entity_name,raw_impact,confidence,summary,analyzed_at
+          FROM news_impact ORDER BY analyzed_at DESC LIMIT 20;
+4. 连续观察两轮（6 小时）：analyzed_at 应当每次刷新，
+   且 news_impact 行数不会无限增长（唯一键 uk_entity 保证了每实体只有一行）。
+5. 内存自查：grep -c MemoryError 或直接看 nga_analysis_log 有无 ERROR。
